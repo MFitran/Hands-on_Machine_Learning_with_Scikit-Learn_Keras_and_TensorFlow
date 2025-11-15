@@ -2,7 +2,7 @@
 
 This notebook serves as a summary and submission for **Chapter 11** of the book *"Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow."*
 
-The chapter tackles the primary challenges encountered when training very deep neural networks (e.g., 10+ layers) and provides the modern solutions that make Deep Learning practical.
+This chapter tackles the primary challenges encountered when training very deep neural networks (e.g., 10+ layers) and provides the modern solutions that make Deep Learning practical.
 
 ---
 
@@ -40,27 +40,16 @@ With millions of parameters, deep networks are highly prone to overfitting the t
 
 ## 💻 Code & Concepts Reproduced
 
-This notebook provides code examples for the following techniques:
+This notebook provides code examples and theoretical explanations for the following techniques:
 
-* **Initialization:** `keras.layers.Dense(..., kernel_initializer="he_normal")`.
-* **Activation Functions:** `keras.layers.LeakyReLU(alpha=0.2)`.
-* **Batch Normalization:** `keras.layers.BatchNormalization()`.
-* **Gradient Clipping:** `optimizer=keras.optimizers.SGD(clipvalue=1.0)`.
-* **Transfer Learning:** Loading weights (`load_weights`) and freezing layers (`layer.trainable = False`).
-* **Optimizers:**
-    * `keras.optimizers.SGD(lr=0.001, momentum=0.9)`
-    * `keras.optimizers.SGD(lr=0.001, momentum=0.9, nesterov=True)`
-    * `keras.optimizers.Adagrad(lr=0.001)`
-    * `keras.optimizers.RMSprop(lr=0.001, rho=0.9)`
-    * `keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999)`
-* **Learning Rate Scheduling:**
-    * Power: `optimizer=keras.optimizers.SGD(lr=0.01, decay=1e-4)`
-    * Exponential and Piecewise: Using a custom callback or function.
-    * Performance: `keras.callbacks.ReduceLROnPlateau`.
-* **Regularization:**
-    * $\ell_2$: `keras.layers.Dense(..., kernel_regularizer=keras.regularizers.l2(0.01))`
-    * Dropout: `keras.layers.Dropout(rate=0.2)`
-    * Max-Norm: `kernel_constraint=keras.constraints.max_norm(1.)`
+* **Initialization:** `keras.layers.Dense(..., kernel_initializer="he_normal")`
+* **Activation Functions:** `keras.layers.LeakyReLU(alpha=0.2)`
+* **Batch Normalization:** `keras.layers.BatchNormalization()`
+* **Gradient Clipping:** `optimizer=keras.optimizers.SGD(clipvalue=1.0)`
+* **Transfer Learning:** Reusing layers from a pretrained model and setting `layer.trainable = False` to freeze them.
+* **Faster Optimizers:** Implementing `SGD` (with Momentum/Nesterov), `Adagrad`, `RMSprop`, and `Adam`.
+* **Learning Rate Scheduling:** Using `decay` in the optimizer, custom `LearningRateScheduler` callbacks, and `ReduceLROnPlateau`.
+* **Regularization:** Applying `l2` regularization, `Dropout`, and `max_norm` constraints to layers.
 
 ---
 
