@@ -1,6 +1,8 @@
 # Enrichment Assignments: Machine Learning and Deep Learning
 
-Welcome to the Enrichment Assignment repository for your Machine Learning and Deep Learning classes. This project aims to explore and implement key concepts presented in the book **"Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow" (2nd Edition)** by Aurélien Géron.
+Welcome to the Enrichment Assignment repository for your Machine Learning and Deep Learning classes. This project aims to explore and implement key concepts presented in the book **"Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow" (2nd Edition)** by Aurélien Géron. Link to the book: https://drive.google.com/file/d/1n9kUmzEXiQ6fvBSechCbDd_JXFADI4E1/view
+
+<img width="1024" height="1317" alt="image" src="https://github.com/user-attachments/assets/33941497-e805-4d0a-afe9-7810e5418776" />
 
 ## 📖 About the Book
 
