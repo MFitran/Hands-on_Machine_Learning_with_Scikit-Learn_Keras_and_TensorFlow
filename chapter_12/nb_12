@@ -1,0 +1,932 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Chapter 12 – Custom Models and Training with TensorFlow\n",
+    "\n",
+    "This notebook contains all the code samples and solutions to the exercises in chapter 12 of *Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow, 2nd Edition* (O'Reilly). *Note: all code examples are based on the author's original GitHub repository.* \n",
+    "\n",
+    "**Assignment Instructions:**\n",
+    "Per the assignment guidelines, this notebook reproduces the code from Chapter 12. It also includes theoretical explanations and summaries for each concept, as required."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Chapter Summary\n",
+    "\n",
+    "This chapter moves beyond the high-level `tf.keras` Sequential and Functional APIs to explore TensorFlow's lower-level Python API. This provides maximum flexibility for researchers and practitioners who need more control.\n",
+    "\n",
+    "Key concepts covered include:\n",
+    [cite_start]"* **TensorFlow Basics:** A quick overview of TensorFlow's features and a look at its core data structures: Tensors, Variables, Sparse Tensors, Ragged Tensors, etc.[cite: 1278, 1285].\n",
+    "* **Custom Components:** We learn how to write our own custom:\n",
+    [cite_start]"    * Loss Functions (as simple functions or as `keras.losses.Loss` subclasses)[cite: 1286, 1288].\n",
+    [cite_start]"    * Metrics (including stateful/streaming metrics by subclassing `keras.metrics.Metric`)[cite: 1291, 1292].\n",
+    [cite_start]"    * Layers (as simple `Lambda` layers or by subclassing `keras.layers.Layer`)[cite: 1293, 1294].\n",
+    [cite_start]"    * Models (by subclassing `keras.Model` for dynamic architectures)[cite: 1298].\n",
+    [cite_start]"* **Losses Based on Model Internals:** Using the `add_loss()` method to create complex loss functions that depend on a model's internal states, such as for regularization[cite: 1299].\n",
+    "* **Autodiff with `tf.GradientTape`:** A deep dive into TensorFlow's automatic differentiation engine. [cite_start]We learn how to use `tf.GradientTape` to compute gradients, watch non-variable tensors, and even define custom gradients to handle numerical stability[cite: 1301, 1303, 1304].\n",
+    "* **Custom Training Loops:** We build a complete training loop from scratch. [cite_start]This gives full control over the training process, which is useful for complex research, such as using multiple optimizers for different parts of a network[cite: 1305, 1306].\n",
+    "* **TF Functions and Graphs:** We explore how TensorFlow converts Python code into high-performance computation graphs using the `@tf.function` decorator. [cite_start]This involves **AutoGraph** (which converts Python control flow like `if` and `while` into TF ops) and **Tracing** (which generates a graph for a specific input signature)[cite: 1307, 1309, 1310]. [cite_start]We also cover the rules for writing graph-compatible code[cite: 1311, 1312]."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Setup\n",
+    "\n",
+    "First, let's import a few common modules, ensure MatplotLib plots figures inline and prepare a function to save the figures. We also check that Python 3.5 or later is installed (although Python 3.7 or later is required for the latest versions of Scikit-Learn), as well as Scikit-Learn ≥0.20 and TensorFlow ≥2.0."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Python ≥3.5 is required\n",
+    "import sys\n",
+    "assert sys.version_info >= (3, 5)\n",
+    "\n",
+    "# Scikit-Learn ≥0.20 is required\n",
+    "import sklearn\n",
+    "assert sklearn.__version__ >= \"0.20\"\n",
+    "\n",
+    "# TensorFlow ≥2.0 is required\n",
+    "import tensorflow as tf\n",
+    "from tensorflow import keras\n",
+    "assert tf.__version__ >= \"2.0\"\n",
+    "\n",
+    "# Common imports\n",
+    "import numpy as np\n",
+    "import os\n",
+    "\n",
+    "# to make this notebook's output stable across runs\n",
+    "np.random.seed(42)\n",
+    "tf.random.set_seed(42)\n",
+    "\n",
+    "# To plot pretty figures\n",
+    "%matplotlib inline\n",
+    "import matplotlib as mpl\n",
+    "import matplotlib.pyplot as plt\n",
+    "mpl.rc('axes', labelsize=14)\n",
+    "mpl.rc('xtick', labelsize=12)\n",
+    "mpl.rc('ytick', labelsize=12)\n",
+    "\n",
+    "# Where to save the figures\n",
+    "PROJECT_ROOT_DIR = \".\"\n",
+    "CHAPTER_ID = \"tf_custom\"\n",
+    "IMAGES_PATH = os.path.join(PROJECT_ROOT_DIR, \"images\", CHAPTER_ID)\n",
+    "os.makedirs(IMAGES_PATH, exist_ok=True)\n",
+    "\n",
+    "def save_fig(fig_id, tight_layout=True, fig_extension=\"png\", resolution=300):\n",
+    "    path = os.path.join(IMAGES_PATH, fig_id + \".\" + fig_extension)\n",
+    "    print(\"Saving figure\", fig_id)\n",
+    "    if tight_layout:\n",
+    "        plt.tight_layout()\n",
+    "    plt.savefig(path, format=fig_extension, dpi=resolution)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## A Quick Tour of TensorFlow\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    [cite_start]"TensorFlow is a powerful open-source library for numerical computation, fine-tuned for large-scale Machine Learning[cite: 1278].\n",
+    "\n",
+    "Its core features include:\n",
+    [cite_start]"* **NumPy-like core with GPU support**[cite: 1279].\n",
+    [cite_start]"* **Distributed computing** support across multiple devices and servers[cite: 1279].\n",
+    [cite_start]"* A **just-in-time (JIT) compiler** that optimizes computation graphs for speed and memory[cite: 1279].\n",
+    * [cite_start]**Autodiff** capabilities for efficiently computing gradients[cite: 1279].\n",
+    [cite_start]"* An extensive ecosystem including `tf.keras`, `tf.data`, `tf.image`, TF Extended (TFX), and TF Hub[cite: 1278, 1279]."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Using TensorFlow like NumPy\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "TensorFlow's API revolves around **tensors**, which are very similar to NumPy `ndarray`s. [cite_start]They are typically multidimensional arrays[cite: 1281]. A key difference is that `tf.Tensor` objects are **immutable**, while NumPy arrays are mutable. [cite_start]If you need a mutable tensor in TensorFlow, you must use a `tf.Variable`[cite: 1284].\n",
+    "\n",
+    "TensorFlow is also very strict about data types and does not perform automatic type conversions (like NumPy often does). [cite_start]This is to prevent performance-hurting conversions from going unnoticed[cite: 1284]."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Tensors and Operations\n",
+    "\n",
+    "You can create a tensor with `tf.constant()`. [cite_start]It has a `shape` and a `dtype`, just like an `ndarray`[cite: 1281]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "t = tf.constant([[1., 2., 3.], [4., 5., 6.]]) # matrix\n",
+    "print(t)\n",
+    "print(t.shape)\n",
+    "print(t.dtype)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    [cite_start]"Indexing works much like in NumPy[cite: 1281]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(t[:, 1:])\n",
+    "print(t[..., 1, tf.newaxis])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    [cite_start]"All sorts of tensor operations are available, and standard Python operators like `+`, `*`, and `@` (for matrix multiplication) are overloaded to call TF operations[cite: 1282]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(t + 10) # equivalent to tf.add(t, 10)\n",
+    "print(tf.square(t))\n",
+    "print(t @ tf.transpose(t)) # equivalent to tf.matmul(t, tf.transpose(t))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Tensors and NumPy\n",
+    "\n",
+    "Tensors play nice with NumPy. You can create a tensor from a NumPy array and vice versa. [cite_start]You can even apply TF ops to NumPy arrays and NumPy ops to tensors[cite: 1283]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "a = np.array([2., 4., 5.])\n",
+    "print(tf.constant(a))\n",
+    "\n",
+    "print(t.numpy()) # Convert tensor to ndarray\n",
+    "print(np.square(t)) # Apply NumPy op to tensor\n",
+    "print(tf.square(a)) # Apply TF op to ndarray"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Type Conversions\n",
+    "\n",
+    "TensorFlow does not perform automatic type conversions. [cite_start]You must explicitly cast types using `tf.cast()`[cite: 1284]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "try:\n",
+    "    tf.constant(2.) + tf.constant(40)\n",
+    "except tf.errors.InvalidArgumentError as e:\n",
+    "    print(e)\n",
+    "\n",
+    "t2 = tf.constant(40., dtype=tf.float64)\n",
+    "try:\n",
+    "    tf.constant(2.0) + t2\n",
+    "except tf.errors.InvalidArgumentError as e:\n",
+    "    print(e)\n",
+    "\n",
+    "# We must use tf.cast()\n",
+    "t3 = tf.constant(2.0) + tf.cast(t2, tf.float32)\n",
+    "print(t3)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Variables\n",
+    "\n",
+    "A `tf.Variable` is needed when you need a mutable tensor, such as the weights in a neural network. [cite_start]It can be modified in place using methods like `assign()`[cite: 1284]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "v = tf.Variable([[1., 2., 3.], [4., 5., 6.]])\n",
+    "print(v)\n",
+    "\n",
+    "# Modify in place\n",
+    "v.assign(2 * v)\n",
+    "print(\"v * 2:\\n\", v)\n",
+    "\n",
+    "v[0, 1].assign(42)\n",
+    "print(\"v with (0,1) = 42:\\n\", v)\n",
+    "\n",
+    "v.scatter_nd_update(indices=[[0, 0], [1, 2]], updates=[100., 200.])\n",
+    "print(\"v after scatter_nd_update:\\n\", v)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Other Data Structures\n",
+    "\n",
+    [cite_start]"TensorFlow also supports several other data structures[cite: 1285]:\n",
+    "* **`tf.SparseTensor`**: For tensors containing mostly zeros.\n",
+    "* **`tf.TensorArray`**: For lists of tensors.\n",
+    "* **`tf.RaggedTensor`**: For static lists of lists of tensors (where slices can have different lengths).\n",
+    "* **String Tensors:** Regular tensors of type `tf.string` (representing byte strings).\n",
+    * **Sets:** Represented as regular tensors, with set operations available in `tf.sets`.\n",
+    * **Queues:** For storing tensors across steps (e.g., `tf.queue.FIFOQueue`)."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Customizing Models and Training\n",
+    "\n",
+    "Now we'll use the low-level API to build custom components for our models."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Custom Loss Functions\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "If Keras doesn't provide the loss function you need (e.g., Huber loss before it was added), you can write your own. [cite_start]The simplest way is to create a function that takes the labels (`y_true`) and predictions (`y_pred`) as arguments and returns the loss (a tensor containing one loss per instance)[cite: 1286]. For performance, you should use TensorFlow operations."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Huber Loss Function\n",
+    "\n",
+    "def huber_fn(y_true, y_pred):\n",
+    "    error = y_true - y_pred\n",
+    "    is_small_error = tf.abs(error) < 1\n",
+    "    squared_loss = tf.square(error) / 2\n",
+    "    linear_loss  = tf.abs(error) - 0.5\n",
+    "    return tf.where(is_small_error, squared_loss, linear_loss)\n",
+    "\n",
+    "# We can now use this when compiling a model:\n",
+    "# model.compile(loss=huber_fn, optimizer=\"nadam\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Saving and Loading Models That Contain Custom Components\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    [cite_start]"When you save a model containing a custom function (like `huber_fn`), Keras only saves the function's *name*[cite: 1287]. [cite_start]When loading it, you must provide a dictionary that maps the name to the function object[cite: 1287].\n",
+    "\n",
+    "If your custom function has hyperparameters (like the `threshold` in Huber loss), they won't be saved. [cite_start]The solution is to subclass `keras.losses.Loss` and implement the `get_config()` method[cite: 1288]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: HuberLoss Class\n",
+    "\n",
+    "class HuberLoss(keras.losses.Loss):\n",
+    "    def __init__(self, threshold=1.0, **kwargs):\n",
+    "        self.threshold = threshold\n",
+    "        super().__init__(**kwargs)\n",
+    "        \n",
+    "    def call(self, y_true, y_pred):\n",
+    "        error = y_true - y_pred\n",
+    "        is_small_error = tf.abs(error) < self.threshold\n",
+    "        squared_loss = tf.square(error) / 2\n",
+    "        linear_loss  = self.threshold * tf.abs(error) - self.threshold**2 / 2\n",
+    "        return tf.where(is_small_error, squared_loss, linear_loss)\n",
+    "    \n",
+    "    def get_config(self):\n",
+    "        base_config = super().get_config()\n",
+    "        return {**base_config, \"threshold\": self.threshold}\n",
+    "\n",
+    "# To use it:\n",
+    "# model.compile(loss=HuberLoss(2.), optimizer=\"nadam\")\n",
+    "\n",
+    "# When loading:\n",
+    "# model = keras.models.load_model(\n",
+    "#     \"my_model.h5\",\n",
+    "#     custom_objects={\"HuberLoss\": HuberLoss}\n",
+    "# )"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Custom Activation Functions, Initializers, Regularizers, and Constraints\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "Most Keras components can be customized in the same way. [cite_start]Most of the time, you can just write a simple Python function with the appropriate inputs and outputs[cite: 1289]. [cite_start]If you need to save hyperparameters, you should subclass the appropriate base class (e.g., `keras.regularizers.Regularizer`)[cite: 1290]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Simple custom functions\n",
+    "\n",
+    "def my_softplus(z): # activation function\n",
+    "    return tf.math.log(tf.exp(z) + 1.0)\n",
+    "\n",
+    "def my_glorot_initializer(shape, dtype=tf.float32): # initializer\n",
+    "    stddev = tf.sqrt(2. / (shape[0] + shape[1]))\n",
+    "    return tf.random.normal(shape, stddev=stddev, dtype=dtype)\n",
+    "\n",
+    "def my_l1_regularizer(weights): # regularizer\n",
+    "    return tf.reduce_sum(tf.abs(0.01 * weights))\n",
+    "\n",
+    "def my_positive_weights(weights): # constraint\n",
+    "    return tf.where(weights < 0., tf.zeros_like(weights), weights)\n",
+    "\n",
+    "# You can then use them like this:\n",
+    "# layer = keras.layers.Dense(30, activation=my_softplus,\n",
+    "#                            kernel_initializer=my_glorot_initializer,\n",
+    "#                            kernel_regularizer=my_l1_regularizer,\n",
+    "#                            kernel_constraint=my_positive_weights)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Custom regularizer class\n",
+    "\n",
+    "class MyL1Regularizer(keras.regularizers.Regularizer):\n",
+    "    def __init__(self, factor):\n",
+    "        self.factor = factor\n",
+    "    def __call__(self, weights):\n",
+    "        return tf.reduce_sum(tf.abs(self.factor * weights))\n",
+    "    def get_config(self):\n",
+    "        return {\"factor\": self.factor}"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Custom Metrics\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "**Losses vs. Metrics:**\n",
+    "* **Losses** are used by Gradient Descent to train a model. They must be differentiable and are not necessarily easy to interpret.\n",
+    "* **Metrics** are used to evaluate a model. They must be easy to interpret and can be non-differentiable (e.g., accuracy).\n",
+    "\n",
+    "For simple metrics, you can just define a function (like we did for losses). However, some metrics need to be calculated over an entire epoch, not just per batch. For example, **precision** (True Positives / All Positive Predictions) cannot be averaged across batches.\n",
+    "\n",
+    "For this, we need a **streaming metric** (or stateful metric). This requires subclassing `keras.metrics.Metric`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: A Streaming Huber Metric Class\n",
+    "\n",
+    "class HuberMetric(keras.metrics.Metric):\n",
+    "    def __init__(self, threshold=1.0, **kwargs):\n",
+    "        super().__init__(**kwargs) # handles base args (e.g., name, dtype)\n",
+    "        self.threshold = threshold\n",
+    "        self.huber_fn = create_huber(threshold) # Use function from earlier\n",
+    "        # Use add_weight() to create variables to track the state\n",
+    "        self.total = self.add_weight(\"total\", initializer=\"zeros\")\n",
+    "        self.count = self.add_weight(\"count\", initializer=\"zeros\")\n",
+    "        \n",
+    "    def update_state(self, y_true, y_pred, sample_weight=None):\n",
+    "        # This is called at each batch\n",
+    "        metric = self.huber_fn(y_true, y_pred)\n",
+    "        self.total.assign_add(tf.reduce_sum(metric))\n",
+    "        self.count.assign_add(tf.cast(tf.size(y_true), tf.float32))\n",
+    "        \n",
+    "    def result(self):\n",
+    "        # This is called to get the metric's current value\n",
+    "        return self.total / self.count\n",
+    "    \n",
+    "    def get_config(self):\n",
+    "        base_config = super().get_config()\n",
+    "        return {**base_config, \"threshold\": self.threshold}\n",
+    "    \n",
+    "    def reset_states(self):\n",
+    "        # The state of the metric will be reset at the start of each epoch\n",
+    "        self.total.assign(0.0)\n",
+    "        self.count.assign(0.0)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Custom Layers\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "If TensorFlow doesn't have the layer you need, you can create your own.\n",
+    "\n",
+    "* **Weightless Layers:** If the layer has no weights, the simplest option is to wrap a function in a `keras.layers.Lambda` layer.\n",
+    "* **Stateful Layers:** To create a layer with trainable weights, you must subclass `keras.layers.Layer` and implement three methods:\n",
+    "    1.  `__init__()`: Creates the hyperparameters (e.g., `units`, `activation`).\n",
+    "    2.  `build()`: Creates the layer's variables (weights). This method is called the first time the layer is used, so it knows its `input_shape`.\n",
+    "    3.  `call()`: Performs the desired operations (the forward pass)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Weightless Lambda Layer\n",
+    "exponential_layer = keras.layers.Lambda(lambda x: tf.exp(x))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Custom Stateful (Dense) Layer\n",
+    "\n",
+    "class MyDense(keras.layers.Layer):\n",
+    "    def __init__(self, units, activation=None, **kwargs):\n",
+    "        super().__init__(**kwargs)\n",
+    "        self.units = units\n",
+    "        self.activation = keras.activations.get(activation)\n",
+    "\n",
+    "    def build(self, batch_input_shape):\n",
+    "        # Create the weights (kernel) and biases\n",
+    "        self.kernel = self.add_weight(\n",
+    "            name=\"kernel\", shape=[batch_input_shape[-1], self.units],\n",
+    "            initializer=\"glorot_normal\")\n",
+    "        self.bias = self.add_weight(\n",
+    "            name=\"bias\", shape=[self.units], initializer=\"zeros\")\n",
+    "        super().build(batch_input_shape) # Must be at the end\n",
+    "\n",
+    "    def call(self, X):\n",
+    "        # Perform the forward pass\n",
+    "        return self.activation(X @ self.kernel + self.bias)\n",
+    "\n",
+    "    def compute_output_shape(self, batch_input_shape):\n",
+    "        # Return the output shape\n",
+    "        return tf.TensorShape(batch_input_shape.as_list()[:-1] + [self.units])\n",
+    "\n",
+    "    def get_config(self):\n",
+    "        base_config = super().get_config()\n",
+    "        return {**base_config, \"units\": self.units,\n",
+    "                \"activation\": keras.activations.serialize(self.activation)}"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Custom Models\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "You can also create a custom model by subclassing `keras.Model`. This is useful for complex architectures that are highly repetitive or have complex internal structures (like loops or skip connections).\n",
+    "\n",
+    "The `keras.Model` class is a subclass of `keras.layers.Layer`, so it has the same API, but it also includes the `fit()`, `evaluate()`, and `predict()` methods. The structure is the same: create layers in the constructor and use them in the `call()` method.\n",
+    "\n",
+    "Below, we will build a model with a **Residual Block**. A residual block has a *skip connection* that adds the input to the output of the block (`return inputs + Z`). This helps the network learn by allowing gradients to flow more easily."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Custom Model with Residual Blocks\n",
+    "\n",
+    "# First, define the ResidualBlock as a custom layer\n",
+    "class ResidualBlock(keras.layers.Layer):\n",
+    "    def __init__(self, n_layers, n_neurons, **kwargs):\n",
+    "        super().__init__(**kwargs)\n",
+    "        self.hidden = [keras.layers.Dense(n_neurons, activation=\"elu\",\n",
+    "                                         kernel_initializer=\"he_normal\")\n",
+    "                      for _ in range(n_layers)]\n",
+    "\n",
+    "    def call(self, inputs):\n",
+    "        Z = inputs\n",
+    "        for layer in self.hidden:\n",
+    "            Z = layer(Z)\n",
+    "        return inputs + Z # The skip connection\n",
+    "\n",
+    "# Now, use this block in a custom model\n",
+    "class ResidualRegressor(keras.Model):\n",
+    "    def __init__(self, output_dim, **kwargs):\n",
+    "        super().__init__(**kwargs)\n",
+    "        self.hidden1 = keras.layers.Dense(30, activation=\"elu\",\n",
+    "                                         kernel_initializer=\"he_normal\")\n",
+    "        self.block1 = ResidualBlock(2, 30)\n",
+    "        self.block2 = ResidualBlock(2, 30)\n",
+    "        self.out = keras.layers.Dense(output_dim)\n",
+    "\n",
+    "    def call(self, inputs):\n",
+    "        Z = self.hidden1(inputs)\n",
+    "        for _ in range(1 + 3): # Loop 4 times\n",
+    "            Z = self.block1(Z)\n",
+    "        Z = self.block2(Z)\n",
+    "        return self.out(Z)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Losses and Metrics Based on Model Internals\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "Sometimes, a loss needs to depend on a model's internal parts (like hidden layer weights or activations), not just the predictions and labels. This is often used for regularization.\n",
+    "\n",
+    "You can define such a loss within a custom layer or model's `call()` method, and then add it to the model's main loss by calling `self.add_loss()`.\n",
+    "\n",
+    "In the example below, we add a *reconstruction loss*: the model has an auxiliary output that tries to reconstruct the inputs. This loss encourages the hidden layers to preserve as much information as possible, which can act as a regularizer."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Custom Model with Reconstruction Loss\n",
+    "\n",
+    "class ReconstructingRegressor(keras.Model):\n",
+    "    def __init__(self, output_dim, **kwargs):\n",
+    "        super().__init__(**kwargs)\n",
+    "        self.hidden = [keras.layers.Dense(30, activation=\"selu\",\n",
+    "                                         kernel_initializer=\"lecun_normal\")\n",
+    "                      for _ in range(5)]\n",
+    "        self.out = keras.layers.Dense(output_dim)\n",
+    "        self.reconstruct = keras.layers.Dense(8) # 8 input features in housing dataset\n",
+    "        self.reconstruction_loss_weight = 0.05\n",
+    "\n",
+    "    def build(self, batch_input_shape):\n",
+    "        n_inputs = batch_input_shape[-1]\n",
+    "        self.reconstruct = keras.layers.Dense(n_inputs)\n",
+    "        super().build(batch_input_shape)\n",
+    "        \n",
+    "    def call(self, inputs):\n",
+    "        Z = inputs\n",
+    "        for layer in self.hidden:\n",
+    "            Z = layer(Z)\n",
+    "        reconstruction = self.reconstruct(Z)\n",
+    "        # Compute reconstruction loss\n",
+    "        recon_loss = tf.reduce_mean(tf.square(reconstruction - inputs))\n",
+    "        # Add it to the model's main loss\n",
+    "        self.add_loss(self.reconstruction_loss_weight * recon_loss)\n",
+    "        return self.out(Z)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Computing Gradients Using Autodiff\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "TensorFlow's **automatic differentiation** (autodiff) feature is what makes backpropagation possible without manually deriving gradients. The main tool for this is `tf.GradientTape`.\n",
+    "\n",
+    "1.  You create a `tf.GradientTape()` context.\n",
+    "2.  Inside this block, TensorFlow **records** every computation that involves a `tf.Variable`.\n",
+    "3.  After the block, you call the tape's `gradient()` method, passing it the final result (e.g., the loss) and the list of variables you want the gradients for.\n",
+    "\n",
+    "The tape is automatically erased immediately after `gradient()` is called. If you need to call it more than once, you must create a `persistent=True` tape and manually delete it afterward (`del tape`)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: tf.GradientTape\n",
+    "\n",
+    "def f(w1, w2):\n",
+    "    return 3 * w1 ** 2 + 2 * w1 * w2\n",
+    "\n",
+    "w1, w2 = tf.Variable(5.), tf.Variable(3.)\n",
+    "with tf.GradientTape() as tape:\n",
+    "    z = f(w1, w2)\n",
+    "\n",
+    "gradients = tape.gradient(z, [w1, w2])\n",
+    "print(gradients)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "By default, the tape only tracks variables. To track a `tf.Tensor`, you must call `tape.watch()` on it."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "c1, c2 = tf.constant(5.), tf.constant(3.)\n",
+    "with tf.GradientTape() as tape:\n",
+    "    tape.watch(c1)\n",
+    "    tape.watch(c2)\n",
+    "    z = f(c1, c2)\n",
+    "\n",
+    "gradients = tape.gradient(z, [c1, c2])\n",
+    "print(gradients)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "You can also stop gradients from backpropagating through a part of your network using `tf.stop_gradient()`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def f_stop(w1, w2):\n",
+    "    return 3 * w1 ** 2 + tf.stop_gradient(2 * w1 * w2)\n",
+    "\n",
+    "with tf.GradientTape() as tape:\n",
+    "    z = f_stop(w1, w2)\n",
+    "\n",
+    "gradients = tape.gradient(z, [w1, w2])\n",
+    "print(gradients) # The gradient for w2 is None"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Custom Training Loops\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "In rare cases, the `fit()` method is not flexible enough (e.g., if you need two different optimizers for different parts of your network). In these cases, you can write your own custom training loop.\n",
+    "\n",
+    "The general process is:\n",
+    "1.  Create two nested loops: one for epochs, one for batches.\n",
+    "2.  Inside the batch loop, get a batch of data.\n",
+    "3.  Create a `tf.GradientTape()` block.\n",
+    "4.  Inside the block, make a prediction (the *forward pass*) and compute the loss.\n",
+    "5.  After the block, use the tape to compute the gradients of the loss with regard to the model's trainable variables.\n",
+    "6.  Apply these gradients to the optimizer to perform a Gradient Descent step (e.g., `optimizer.apply_gradients(...)`).\n",
+    "7.  Update your metrics and log the results.\n",
+    "8.  At the end of the epoch, reset the metrics."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: A Custom Training Loop\n",
+    "\n",
+    "# 1. Create a simple model (no need to compile it)\n",
+    "model = keras.models.Sequential([\n",
+    "    keras.layers.Dense(30, activation=\"relu\", input_shape=[8]),\n",
+    "    keras.layers.Dense(1)\n",
+    "])\n",
+    "\n",
+    "# 2. Define helpers and components\n",
+    "def random_batch(X, y, batch_size=32):\n",
+    "    idx = np.random.randint(len(X), size=batch_size)\n",
+    "    return X[idx], y[idx]\n",
+    "\n",
+    "def print_status_bar(iteration, total, loss, metrics=None):\n",
+    "    metrics = \" - \".join([\"{}: {:.4f}\".format(m.name, m.result())\n",
+    "                          for m in [loss] + (metrics or [])])\n",
+    "    end = \"\" if iteration < total else \"\\n\"\n",
+    "    print(\"\\r{}/{} - \".format(iteration, total) + metrics, end=end)\n",
+    "\n",
+    "n_epochs = 5\n",
+    "batch_size = 32\n",
+    "n_steps = len(X_train) // batch_size\n",
+    "optimizer = keras.optimizers.Nadam(lr=0.01)\n",
+    "loss_fn = keras.losses.mean_squared_error\n",
+    "mean_loss = keras.metrics.Mean()\n",
+    "metrics = [keras.metrics.MeanAbsoluteError()]\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 3. Run the custom loop\n",
+    "for epoch in range(1, n_epochs + 1):\n",
+    "    print(\"Epoch {}/{}\".format(epoch, n_epochs))\n",
+    "    for step in range(1, n_steps + 1):\n",
+    "        # Get a batch\n",
+    "        X_batch, y_batch = random_batch(X_train, y_train)\n",
+    "        \n",
+    "        # Use the GradientTape\n",
+    "        with tf.GradientTape() as tape:\n",
+    "            y_pred = model(X_batch, training=True)\n",
+    "            main_loss = tf.reduce_mean(loss_fn(y_batch, y_pred))\n",
+    "            loss = tf.add_n([main_loss] + model.losses) # model.losses includes regularization losses\n",
+    "        \n",
+    "        # Compute and apply gradients\n",
+    "        gradients = tape.gradient(loss, model.trainable_variables)\n",
+    "        optimizer.apply_gradients(zip(gradients, model.trainable_variables))\n",
+    "\n",
+    "        # Update metrics\n",
+    "        mean_loss(loss)\n",
+    "        for metric in metrics:\n",
+    "            metric(y_batch, y_pred)\n",
+    "        \n",
+    "        # Print the status bar\n",
+    "        print_status_bar(step * batch_size, len(y_train), mean_loss, metrics)\n",
+    "\n",
+    "    # Print status bar at the end of the epoch and reset metrics\n",
+    "    print_status_bar(len(y_train), len(y_train), mean_loss, metrics)\n",
+    "    for metric in [mean_loss] + metrics:\n",
+    "        metric.reset_states()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## TensorFlow Functions and Graphs\n",
+    "\n",
+    "### Theoretical Explanation\n",
+    "\n",
+    "Keras, by default, converts your model's functions into **TensorFlow Functions (TF Functions)**. This is a crucial optimization.\n",
+    "\n",
+    "You can create one manually by adding the `@tf.function` decorator to a Python function. When you do, TensorFlow analyzes the Python code and generates an equivalent, highly optimized **computation graph**.\n",
+    "\n",
+    "**How it works:**\n",
+    "1.  [cite_start]**AutoGraph:** TensorFlow first analyzes the function's source code and converts Python control flow statements (like `if`, `while`, `for`) into their TensorFlow graph equivalents (like `tf.cond()`, `tf.while_loop()`)[cite: 1309, 1310].\n",
+    "2.  **Tracing:** The *first time* you call the TF Function with a specific *input signature* (i.e., a specific set of input shapes and types), it runs the "upgraded" function in graph mode. Instead of running computations, it records all the TF operations in a graph. [cite_start]This graph is then optimized and cached[cite: 1310].\n",
+    "3.  **Execution:** The *next time* you call the TF Function with the same signature, it will reuse the cached, optimized graph and run it very efficiently.\n",
+    "\n",
+    "**Rules for TF Functions:**\n",
+    "* Only use TF operations. [cite_start]Any external library call (like `np.random.rand()` or `print()`) will only run during tracing, not during execution[cite: 1311].\n",
+    [cite_start]"* Use `tf.range()` for dynamic loops, not Python's `range()` (which creates a static, unrolled loop)[cite: 1312].\n",
+    * [cite_start]Create variables on the first call only (or, better, outside the function, e.g., in a model's `__init__`)[cite: 1311].\n",
+    [cite_start]"* Modify variables using the `.assign()` method, not the `=` operator[cite: 1312]."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Creating a TF Function\n",
+    "\n",
+    "def cube(x):\n",
+    "    return x ** 3\n",
+    "\n",
+    "print(\"Python function:\", cube(2))\n",
+    "\n",
+    "# Create a TF Function\n",
+    "tf_cube = tf.function(cube)\n",
+    "print(\"TF Function (Tensor):\", tf_cube(tf.constant(2.0)))\n",
+    "\n",
+    "# You can also use it as a decorator\n",
+    "@tf.function\n",
+    "def tf_cube_decorated(x):\n",
+    "    return x ** 3"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Code Reproduction: Tracing\n",
+    "\n",
+    "@tf.function\n",
+    "def tf_cube_trace(x):\n",
+    "    print(\"Tracing! x =\", x) # This will only print during tracing\n",
+    "    return x ** 3\n",
+    "\n",
+    "print(\"First call (traces):\")\n",
+    "result = tf_cube_trace(tf.constant(2.0))\n",
+    "\n",
+    "print(\"\\nSecond call (reuses graph, no print):\")\n",
+    "result = tf_cube_trace(tf.constant(3.0))\n",
+    "\n",
+    "print(\"\\nThird call (new signature, traces again):\")\n",
+    "result = tf_cube_trace(tf.constant([1.0, 2.0]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Exercises\n",
+    "\n",
+    "From Chapter 12, page 410:\n",
+    "\n",
+    "1.  How would you describe TensorFlow in a short sentence? What are its main features? Can you name other popular Deep Learning libraries?\n",
+    "2.  Is TensorFlow a drop-in replacement for NumPy? What are the main differences between the two?\n",
+    "3.  Do you get the same result with `tf.range(10)` and `tf.constant(np.arange(10))`?\n",
+    "4.  Can you name six other data structures available in TensorFlow, beyond regular tensors?\n",
+    "5.  A custom loss function can be defined by writing a function or by subclassing the `keras.losses.Loss` class. When would you use each option?\n",
+    "6.  Similarly, a custom metric can be defined in a function or a subclass of `keras.metrics.Metric`. When would you use each option?\n",
+    "7.  When should you create a custom layer versus a custom model?\n",
+    "8.  What are some use cases that require writing your own custom training loop?\n",
+    "9.  Can custom Keras components contain arbitrary Python code, or must they be convertible to TF Functions?\n",
+    "10. What are the main rules to respect if you want a function to be convertible to a TF Function?\n",
+    "11. When would you need to create a dynamic Keras model? How do you do that? Why not make all your models dynamic?\n",
+    "12. Implement a custom layer that performs Layer Normalization.\n",
+    "13. Train a model using a custom training loop to tackle the Fashion MNIST dataset."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.7.6"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
