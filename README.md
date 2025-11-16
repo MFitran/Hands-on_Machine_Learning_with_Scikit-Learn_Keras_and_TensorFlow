@@ -41,8 +41,4 @@ Here is a breakdown of the chapters in this book:
 
 ## 🚀 Assignment Scope
 
-For this Enrichment assignment, our exploration will focus on fundamental concepts and an introduction to Deep Learning.
-
-**We will only explore material from Chapters 1 through 11.**
-
-The exploration will include code implementation and understanding of concepts from Section I (Fondasi ML) dan dua bab pertama dari Bagian II (Pengenalan ANN dan Cara Melatihnya).
+**We will explore material from Chapters 1 through 19.**
